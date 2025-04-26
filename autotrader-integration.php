@@ -149,18 +149,26 @@ class AutoTrader_Integration {
             wp_send_json_error('You do not have permission to perform this action.');
         }
         
-        $result = $this->sync_autotrader_listings();
+        // Get parameters from request if available
+        $advertiser_id = isset($_POST['advertiser_id']) ? sanitize_text_field($_POST['advertiser_id']) : '66897';
+        $max_pages = isset($_POST['max_pages']) ? intval($_POST['max_pages']) : 0;
+        
+        $result = $this->sync_autotrader_listings($advertiser_id, $max_pages);
         wp_send_json_success($result);
     }
 
     /**
      * Sync AutoTrader listings
+     * 
+     * @param string $advertiser_id The Advertiser ID to fetch stock for
+     * @param int $max_pages Maximum number of pages to retrieve (0 for all)
+     * @return string Status message
      */
-    public function sync_autotrader_listings() {
-        $this->log('Starting AutoTrader sync process');
+    public function sync_autotrader_listings($advertiser_id = '66897', $max_pages = 0) {
+        $this->log('Starting AutoTrader sync process for advertiser ID: ' . $advertiser_id);
         
-        // Get stock data from API
-        $stock_data = $this->get_stock_data();
+        // Get stock data from API with pagination
+        $stock_data = $this->get_stock_data($advertiser_id, $max_pages);
         
         if (empty($stock_data) || !is_array($stock_data)) {
             $this->log('No stock data received from API or invalid format');
@@ -199,23 +207,68 @@ class AutoTrader_Integration {
     }
 
     /**
-     * Get stock data from API
+     * Get stock data from API with pagination support
+     * 
+     * @param string $advertiser_id The Advertiser ID to fetch stock for
+     * @param int $max_pages Maximum number of pages to retrieve (0 for all)
+     * @return array Parsed stock data
      */
-    private function get_stock_data() {
-        $response = $this->api->get_stock_data();
+    private function get_stock_data($advertiser_id = '66897', $max_pages = 0) {
+        $all_results = array();
+        $page = 1;
+        $page_size = 100; // Fetch 100 items per page
+        $total_pages = 1; // Will be updated after first request
+        $total_fetched = 0;
         
-        // Parse the response
-        $data = json_decode($response, true);
+        $this->log('Starting paginated data fetch with page size: ' . $page_size);
         
-        // Check if we have valid data
-        if (is_array($data) && isset($data['results']) && is_array($data['results'])) {
-            $this->log('Valid API response received with ' . count($data['results']) . ' results');
-            return $data['results'];
+        // Loop through pages until we have all data or reach max_pages
+        while (($max_pages === 0 || $page <= $max_pages) && $page <= $total_pages) {
+            $this->log('Fetching page ' . $page . ' of ' . ($max_pages > 0 ? min($max_pages, $total_pages) : $total_pages));
+            
+            // Get data for current page
+            $response = $this->api->get_stock_data($advertiser_id, $page, $page_size);
+            $data = json_decode($response, true);
+            
+            // Check if we have valid data
+            if (is_array($data) && isset($data['results']) && is_array($data['results'])) {
+                $page_results = count($data['results']);
+                $total_fetched += $page_results;
+                $this->log('Received ' . $page_results . ' results on page ' . $page);
+                
+                // Add results to our collection
+                $all_results = array_merge($all_results, $data['results']);
+                
+                // Update total pages if available in response
+                if (isset($data['pagination']) && isset($data['pagination']['totalPages'])) {
+                    $total_pages = $data['pagination']['totalPages'];
+                    $this->log('Total pages: ' . $total_pages);
+                } else if ($page_results < $page_size) {
+                    // If we got fewer results than page size, we're on the last page
+                    $total_pages = $page;
+                    $this->log('Reached last page based on result count');
+                }
+                
+                // Move to next page
+                $page++;
+                
+                // Add a small delay to avoid rate limiting
+                usleep(500000); // 0.5 second delay
+            } else {
+                $this->log('No valid data from API on page ' . $page);
+                break;
+            }
         }
         
-        // For testing purposes, return sample data if API doesn't return valid data
-        $this->log('No valid data from API, using sample data for testing');
-        return $this->get_sample_data();
+        $this->log('Completed data fetch. Total items: ' . $total_fetched);
+        
+        if (empty($all_results)) {
+            // For testing purposes, return sample data if API doesn't return valid data
+            $this->log('No valid data from API, using sample data for testing');
+            return $this->get_sample_data();
+        }
+        
+        return $all_results;
     }
 
     /**
