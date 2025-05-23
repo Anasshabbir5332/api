@@ -150,7 +150,7 @@ class AutoTrader_Integration {
         }
         
         // Get parameters from request if available
-        $advertiser_id = isset($_POST['advertiser_id']) ? sanitize_text_field($_POST['advertiser_id']) : '66897';
+        $advertiser_id = isset($_POST['advertiser_id']) ? sanitize_text_field($_POST['advertiser_id']) : '10012495';
         $max_pages = isset($_POST['max_pages']) ? intval($_POST['max_pages']) : 0;
         
         $result = $this->sync_autotrader_listings($advertiser_id, $max_pages);
@@ -164,61 +164,57 @@ class AutoTrader_Integration {
      * @param int $max_pages Maximum number of pages to retrieve (0 for all)
      * @return string Status message
      */
-/// me make some changes here \
-public function sync_autotrader_listings($advertiser_id = '66897', $max_pages = 0) {
-    $this->log('Starting AutoTrader sync process for advertiser ID: ' . $advertiser_id);
-    
-    // Get stock data from API with pagination
-    $stock_data = $this->get_stock_data($advertiser_id, $max_pages);
-    
-    if (empty($stock_data) || !is_array($stock_data)) {
-        $this->log('No stock data received from API or invalid format');
-        return 'No stock data received from API or invalid format.';
-    }
-    
-    $this->log('Received ' . count($stock_data) . ' listings from API');
-    
-    // Track existing listings to identify deleted ones
-    $existing_listings = $this->get_existing_listings();
-    $processed_listings = array();
-    
-    // Process each listing
-    $created = 0;
-    $updated = 0;
-
-    foreach ($stock_data as $car) {
-        // Check if the advert is published
-        if (
-            !isset($car['retailAdverts']['autotraderAdvert']['status']) || 
-            $car['retailAdverts']['autotraderAdvert']['status'] !== 'PUBLISHED'
-        ) {
-            $this->log('Skipping listing with status: ' . ($car['retailAdverts']['autotraderAdvert']['status'] ?? 'NOT_PUBLISHED'));
-            continue; // Skip this listing
-        }
-
-        $result = $this->process_listing($car);
+    public function sync_autotrader_listings($advertiser_id = '10012495', $max_pages = 0) {
+        $this->log('Starting AutoTrader sync process for advertiser ID: ' . $advertiser_id);
         
-        if ($result['status'] === 'created') {
-            $created++;
-        } elseif ($result['status'] === 'updated') {
-            $updated++;
+        // Get stock data from API with pagination
+        $stock_data = $this->get_stock_data($advertiser_id, $max_pages);
+        
+        if (empty($stock_data) || !is_array($stock_data)) {
+            $this->log('No stock data received from API or invalid format');
+            return 'No stock data received from API or invalid format.';
         }
-
-        if (isset($result['id']) && $result['id']) {
-            $processed_listings[] = $result['id'];
+        
+        $this->log('Received ' . count($stock_data) . ' listings from API');
+        
+        // Track existing listings to identify deleted ones
+        $existing_listings = $this->get_existing_listings();
+        $processed_listings = array();
+        
+        // Process each listing
+        $created = 0;
+        $updated = 0;
+        
+        foreach ($stock_data as $car) {
+            // Skip listings with advertiserAdvert status NOT_PUBLISHED
+            if (isset($car['adverts']) && 
+                isset($car['adverts']['retailAdverts']) && 
+                isset($car['adverts']['retailAdverts']['advertiserAdvert']) && 
+                isset($car['adverts']['retailAdverts']['advertiserAdvert']['status']) && 
+                $car['adverts']['retailAdverts']['advertiserAdvert']['status'] === 'NOT_PUBLISHED') {
+                $this->log('Skipping NOT_PUBLISHED listing: ' . (isset($car['metadata']['stockId']) ? $car['metadata']['stockId'] : 'unknown'));
+                continue;
+            }
+            
+            $result = $this->process_listing($car);
+            
+            if ($result['status'] === 'created') {
+                $created++;
+            } elseif ($result['status'] === 'updated') {
+                $updated++;
+            }
+            
+            if (isset($result['id']) && $result['id']) {
+                $processed_listings[] = $result['id'];
+            }
         }
+        
+        // Remove listings that no longer exist in the API
+        $deleted = $this->delete_old_listings($existing_listings, $processed_listings);
+        
+        $this->log("Sync completed: $created created, $updated updated, $deleted deleted");
+        return "Sync completed: $created listings created, $updated listings updated, $deleted listings deleted.";
     }
-    
-    // Remove listings that no longer exist in the API
-    $deleted = $this->delete_old_listings($existing_listings, $processed_listings);
-    
-    $this->log("Sync completed: $created created, $updated updated, $deleted deleted");
-    return "Sync completed: $created listings created, $updated listings updated, $deleted listings deleted.";
-}
-
-
-/// me make some changes here \
-
 
     /**
      * Get stock data from API with pagination support
@@ -227,7 +223,7 @@ public function sync_autotrader_listings($advertiser_id = '66897', $max_pages = 
      * @param int $max_pages Maximum number of pages to retrieve (0 for all)
      * @return array Parsed stock data
      */
-    private function get_stock_data($advertiser_id = '66897', $max_pages = 0) {
+    private function get_stock_data($advertiser_id = '10012495', $max_pages = 0) {
         $all_results = array();
         $page = 1;
         $page_size = 100; // Fetch 100 items per page
@@ -275,12 +271,6 @@ public function sync_autotrader_listings($advertiser_id = '66897', $max_pages = 
         }
         
         $this->log('Completed data fetch. Total items: ' . $total_fetched);
-        
-        if (empty($all_results)) {
-            // For testing purposes, return sample data if API doesn't return valid data
-            $this->log('No valid data from API, using sample data for testing');
-            return $this->get_sample_data();
-        }
         
         return $all_results;
     }
@@ -443,191 +433,100 @@ public function sync_autotrader_listings($advertiser_id = '66897', $max_pages = 
         // Define taxonomies to set
         $taxonomies = array(
             'make' => isset($standard['make']) ? $standard['make'] : (isset($vehicle['make']) ? $vehicle['make'] : 'Default'),
-            'model' => isset($standard['model']) ? $standard['model'] : (isset($vehicle['model']) ? $vehicle['model'] : 'Default'),
-            'body_type' => isset($standard['bodyType']) ? $standard['bodyType'] : (isset($vehicle['bodyType']) ? $vehicle['bodyType'] : 'Default'),
-            'fuel_type' => isset($standard['fuelType']) ? $standard['fuelType'] : (isset($vehicle['fuelType']) ? $vehicle['fuelType'] : 'Default'),
-            'transmission' => isset($standard['transmissionType']) ? $standard['transmissionType'] : (isset($vehicle['transmissionType']) ? $vehicle['transmissionType'] : 'Default')
+            'model' => isset($standard['model']) ? $standard['model'] : (isset($vehicle['model']) ? $vehicle['model'] : ''),
+            'body_type' => isset($standard['bodyType']) ? $standard['bodyType'] : (isset($vehicle['bodyType']) ? $vehicle['bodyType'] : ''),
+            'fuel_type' => isset($standard['fuelType']) ? $standard['fuelType'] : (isset($vehicle['fuelType']) ? $vehicle['fuelType'] : ''),
+            'transmission' => isset($standard['transmissionType']) ? $standard['transmissionType'] : (isset($vehicle['transmissionType']) ? $vehicle['transmissionType'] : '')
         );
         
         // Set each taxonomy
         foreach ($taxonomies as $taxonomy => $term) {
-            if (empty($term) || $term == 'null') {
-                $term = 'Default';
-            }
-            
-            if (taxonomy_exists($taxonomy)) {
+            if (!empty($term)) {
                 wp_set_object_terms($post_id, $term, $taxonomy);
-                $this->log("Set taxonomy $taxonomy to $term for post $post_id");
             }
         }
     }
 
     /**
-     * Ensure value is a string
-     */
-    private function ensure_string($value) {
-        if (is_array($value)) {
-            return json_encode($value);
-        }
-        return $value;
-    }
-
-    /**
-     * Map API data to meta fields
+     * Map API data to plugin meta fields
      */
     private function map_meta_fields($post_id, $car) {
-        // Debug the car data structure
-        if ($this->debug_mode) {
-            $this->log('Mapping meta fields for car: ' . print_r($car, true));
-        }
-        
-        // Extract vehicle data
+        // Get vehicle data
         $vehicle = isset($car['vehicle']) ? $car['vehicle'] : array();
-        $standard = isset($vehicle['standard']) ? $vehicle['standard'] : array();
-        $advertiser = isset($car['advertiser']) ? $car['advertiser'] : array();
         $metadata = isset($car['metadata']) ? $car['metadata'] : array();
+        $advertiser = isset($car['advertiser']) ? $car['advertiser'] : array();
         $adverts = isset($car['adverts']) ? $car['adverts'] : array();
-        $retailAdverts = isset($adverts['retailAdverts']) ? $adverts['retailAdverts'] : array();
         
-        // Get location data
-        $location = isset($advertiser['location']) ? $advertiser['location'] : array();
-        $address = array();
-        
-        if (!empty($location['addressLineOne'])) $address[] = $location['addressLineOne'];
-        if (!empty($location['town'])) $address[] = $location['town'];
-        if (!empty($location['county'])) $address[] = $location['county'];
-        if (!empty($location['region'])) $address[] = $location['region'];
-        if (!empty($location['postCode'])) $address[] = $location['postCode'];
-        
-        $address_str = implode(', ', $address);
-        
-        // Get coordinates
-        $coordinates = '';
-        if (!empty($location['latitude']) && !empty($location['longitude'])) {
-            $coordinates = $location['latitude'] . ',' . $location['longitude'];
-        }
-        
-        // Get price information
-        $price = '';
-        $sale_price = '';
-        
-        if (isset($retailAdverts['suppliedPrice']['amountGBP'])) {
-            $price = $retailAdverts['suppliedPrice']['amountGBP'];
-        } elseif (isset($adverts['forecourtPrice']['amountGBP'])) {
-            $price = $adverts['forecourtPrice']['amountGBP'];
-        }
-        
-        if (isset($retailAdverts['totalPrice']['amountGBP'])) {
-            $sale_price = $retailAdverts['totalPrice']['amountGBP'];
-        }
-        
-        // Map meta fields according to the API structure
+        // Define meta fields mapping
         $meta_fields = array(
-            // Location fields
-            'listing_address' => $address_str,
-            'listing_location' => $coordinates,
-            
-            // Price fields
-            'regular_price' => $price,
-            'sale_price' => $sale_price,
-            'price_prefix' => isset($retailAdverts['priceIndicatorRating']) ? $retailAdverts['priceIndicatorRating'] : '',
-            'price_suffix' => isset($adverts['forecourtPriceVatStatus']) ? $adverts['forecourtPriceVatStatus'] : '',
-            
             // Vehicle details
-            'year' => isset($vehicle['yearOfManufacture']) ? $vehicle['yearOfManufacture'] : date('Y'),
-            'stock_number' => isset($metadata['stockId']) ? $metadata['stockId'] : (isset($metadata['externalStockId']) ? $metadata['externalStockId'] : ''),
+            'stock_number' => isset($metadata['stockId']) ? $metadata['stockId'] : '',
             'vin_number' => isset($vehicle['vin']) ? $vehicle['vin'] : '',
+            'year' => isset($vehicle['yearOfManufacture']) ? $vehicle['yearOfManufacture'] : '',
             'mileage' => isset($vehicle['odometerReadingMiles']) ? $vehicle['odometerReadingMiles'] : '',
-            'engine_size' => isset($vehicle['badgeEngineSizeLitres']) ? $vehicle['badgeEngineSizeLitres'] : (isset($vehicle['engineCapacityCC']) ? ($vehicle['engineCapacityCC'] / 1000) . 'L' : ''),
-            'door' => isset($vehicle['doors']) ? $vehicle['doors'] : '',
-            'seat' => isset($vehicle['seats']) ? $vehicle['seats'] : '',
-            'city_mpg' => isset($vehicle['fuelEconomyNEDCUrbanMPG']) ? $vehicle['fuelEconomyNEDCUrbanMPG'] : '',
-            'highway_mpg' => isset($vehicle['fuelEconomyNEDCExtraUrbanMPG']) ? $vehicle['fuelEconomyNEDCExtraUrbanMPG'] : '',
+            'engine_size' => isset($vehicle['badgeEngineSizeLitres']) ? $vehicle['badgeEngineSizeLitres'] : '',
+            'doors' => isset($vehicle['doors']) ? $vehicle['doors'] : '',
+            'seats' => isset($vehicle['seats']) ? $vehicle['seats'] : '',
             
-            // Status fields
-            'car_featured' => isset($retailAdverts['autotraderAdvert']['status']) && $retailAdverts['autotraderAdvert']['status'] === 'PUBLISHED' ? 1 : 0,
-            'video_url' => isset($car['media']['video']['href']) ? $car['media']['video']['href'] : '',
-            'car_status' => isset($metadata['lifecycleState']) && $metadata['lifecycleState'] === 'SOLD' ? 1 : 0,
+            // Pricing
+            'price' => isset($adverts['forecourtPrice']['amountGBP']) ? $adverts['forecourtPrice']['amountGBP'] : 
+                      (isset($adverts['retailAdverts']['suppliedPrice']['amountGBP']) ? $adverts['retailAdverts']['suppliedPrice']['amountGBP'] : ''),
+            'sale_price' => isset($adverts['retailAdverts']['totalPrice']['amountGBP']) ? $adverts['retailAdverts']['totalPrice']['amountGBP'] : '',
             
-            // Additional fields
-            'transmission' => isset($vehicle['transmissionType']) ? $vehicle['transmissionType'] : '',
-            'fuel_type' => isset($vehicle['fuelType']) ? $vehicle['fuelType'] : '',
-            'body_type' => isset($standard['bodyType']) ? $standard['bodyType'] : (isset($vehicle['bodyType']) ? $vehicle['bodyType'] : ''),
-            'color' => isset($vehicle['colour']) ? $vehicle['colour'] : '',
-            'cylinders' => isset($vehicle['cylinders']) ? $vehicle['cylinders'] : '',
-            'drive_type' => isset($vehicle['drivetrain']) ? $vehicle['drivetrain'] : '',
+            // Dealer info
+            'dealer_name' => isset($advertiser['name']) ? $advertiser['name'] : '',
+            'dealer_location' => isset($advertiser['location']) ? $this->format_dealer_location($advertiser['location']) : '',
+            
+            // AutoTrader specific
+            'autotrader_id' => isset($metadata['id']) ? $metadata['id'] : '',
+            'autotrader_last_updated' => isset($metadata['lastUpdated']) ? $metadata['lastUpdated'] : '',
+            'autotrader_lifecycle_state' => isset($metadata['lifecycleState']) ? $metadata['lifecycleState'] : ''
         );
         
-        // Set default values for empty fields to ensure they display in the template
-        $default_values = array(
-            'year' => date('Y'),
-            'mileage' => '0',
-            'engine_size' => 'N/A',
-            'door' => '4',
-            'seat' => '5',
-            'city_mpg' => 'N/A',
-            'highway_mpg' => 'N/A',
-            'stock_number' => 'ST' . $post_id,
-            'regular_price' => '0',
-        );
-        
-        // Apply default values for empty fields
-        foreach ($default_values as $key => $default_value) {
-            if (empty($meta_fields[$key])) {
-                $meta_fields[$key] = $default_value;
-            }
-        }
-        
-        // Update meta fields
+        // Set each meta field
         foreach ($meta_fields as $key => $value) {
-            // Ensure value is a string
-            $value = $this->ensure_string($value);
-            update_post_meta($post_id, $key, $value);
-            if ($this->debug_mode) {
-                $this->log("Updated meta field: $key = $value");
+            if (!empty($value)) {
+                update_post_meta($post_id, $key, $value);
             }
         }
     }
 
     /**
-     * Get car description from API data
+     * Format dealer location
+     */
+    private function format_dealer_location($location) {
+        $parts = array();
+        
+        if (isset($location['addressLineOne']) && !empty($location['addressLineOne'])) {
+            $parts[] = $location['addressLineOne'];
+        }
+        
+        if (isset($location['town']) && !empty($location['town'])) {
+            $parts[] = $location['town'];
+        }
+        
+        if (isset($location['county']) && !empty($location['county'])) {
+            $parts[] = $location['county'];
+        }
+        
+        if (isset($location['postCode']) && !empty($location['postCode'])) {
+            $parts[] = $location['postCode'];
+        }
+        
+        return implode(', ', $parts);
+    }
+
+    /**
+     * Get car description
      */
     private function get_car_description($car) {
         $description = '';
         
-        // Check for description in retailAdverts
         if (isset($car['adverts']['retailAdverts']['description'])) {
             $description = $car['adverts']['retailAdverts']['description'];
         }
         
-        // If no description, check for description2
-        if (empty($description) && isset($car['adverts']['retailAdverts']['description2'])) {
-            $description = $car['adverts']['retailAdverts']['description2'];
-        }
-        
-        // If still no description, create one from vehicle data
-        if (empty($description)) {
-            $vehicle = isset($car['vehicle']) ? $car['vehicle'] : array();
-            $standard = isset($vehicle['standard']) ? $vehicle['standard'] : array();
-            
-            $make = isset($standard['make']) ? $standard['make'] : (isset($vehicle['make']) ? $vehicle['make'] : '');
-            $model = isset($standard['model']) ? $standard['model'] : (isset($vehicle['model']) ? $vehicle['model'] : '');
-            $year = isset($vehicle['yearOfManufacture']) ? $vehicle['yearOfManufacture'] : '';
-            $bodyType = isset($standard['bodyType']) ? $standard['bodyType'] : (isset($vehicle['bodyType']) ? $vehicle['bodyType'] : '');
-            $fuelType = isset($standard['fuelType']) ? $standard['fuelType'] : (isset($vehicle['fuelType']) ? $vehicle['fuelType'] : '');
-            $transmission = isset($standard['transmissionType']) ? $standard['transmissionType'] : (isset($vehicle['transmissionType']) ? $vehicle['transmissionType'] : '');
-            $mileage = isset($vehicle['odometerReadingMiles']) ? $vehicle['odometerReadingMiles'] : '';
-            
-            $description = "This $year $make $model is a $bodyType with $fuelType fuel and $transmission transmission.";
-            
-            if (!empty($mileage)) {
-                $description .= " It has $mileage miles on the odometer.";
-            }
-            
-            $description .= " Contact us today to schedule a test drive!";
-        }
-        
-        return wp_kses_post($description);
+        return $description;
     }
 
     /**
@@ -638,74 +537,52 @@ public function sync_autotrader_listings($advertiser_id = '66897', $max_pages = 
             return;
         }
         
-        $gallery_ids = array();
-        $main_image_id = 0;
-        
-        // Get existing gallery images to avoid re-uploading
-        $existing_gallery = get_post_meta($post_id, 'gallery_images', true);
-        $existing_gallery = !empty($existing_gallery) ? explode(',', $existing_gallery) : array();
+        // Get existing images
+        $existing_images = get_post_meta($post_id, '_listing_image_gallery', true);
+        $existing_array = !empty($existing_images) ? explode(',', $existing_images) : array();
+        $new_images = array();
         
         // Process each image
         foreach ($images as $index => $image) {
-            $image_url = '';
-            
-            // Handle different image data structures
-            if (is_array($image) && isset($image['url'])) {
-                $image_url = $image['url'];
-            } elseif (is_array($image) && isset($image['href'])) {
-                $image_url = $image['href'];
-            } elseif (is_string($image)) {
-                $image_url = $image;
-            }
-            
-            // Skip if not a valid URL
-            if (empty($image_url) || !filter_var($image_url, FILTER_VALIDATE_URL)) {
+            if (!isset($image['url'])) {
                 continue;
             }
             
-            // Generate a unique filename
-            $filename = basename($image_url);
+            $url = $image['url'];
             
-            // Check if image already exists in media library
-            $existing_image_id = $this->get_attachment_id_by_url($image_url);
+            // Check if image already exists
+            $attachment_id = $this->get_attachment_id_by_url($url);
             
-            if ($existing_image_id) {
-                // Use existing image
-                $attachment_id = $existing_image_id;
-            } else {
-                // Download and upload the image
-                $attachment_id = $this->upload_image_from_url($image_url, $post_id);
-                
-                if (!$attachment_id) {
-                    continue;
-                }
+            if (!$attachment_id) {
+                // Download and attach the image
+                $attachment_id = $this->download_and_attach_image($url, $post_id);
             }
             
-            // Add to gallery
-            $gallery_ids[] = $attachment_id;
-            
-            // Set first image as featured image if none exists
-            if ($index === 0 && !has_post_thumbnail($post_id)) {
-                set_post_thumbnail($post_id, $attachment_id);
-                $main_image_id = $attachment_id;
+            if ($attachment_id) {
+                $new_images[] = $attachment_id;
+                
+                // Set featured image if this is the first image
+                if ($index === 0 && !has_post_thumbnail($post_id)) {
+                    set_post_thumbnail($post_id, $attachment_id);
+                }
             }
         }
         
-        // Update gallery images meta
-        if (!empty($gallery_ids)) {
-            update_post_meta($post_id, 'gallery_images', implode(',', $gallery_ids));
+        // Update image gallery
+        if (!empty($new_images)) {
+            $gallery = implode(',', array_unique(array_merge($existing_array, $new_images)));
+            update_post_meta($post_id, '_listing_image_gallery', $gallery);
         }
     }
 
     /**
-     * Upload image from URL
+     * Download and attach image
      */
-    private function upload_image_from_url($url, $post_id) {
-        require_once(ABSPATH . 'wp-admin/includes/file.php');
-        require_once(ABSPATH . 'wp-admin/includes/media.php');
-        require_once(ABSPATH . 'wp-admin/includes/image.php');
+    private function download_and_attach_image($url, $post_id) {
+        // Get file name from URL
+        $filename = basename($url);
         
-        // Download file to temp location
+        // Create temp file
         $tmp = download_url($url);
         
         if (is_wp_error($tmp)) {
@@ -848,138 +725,6 @@ public function sync_autotrader_listings($advertiser_id = '66897', $max_pages = 
         if ($this->debug_mode) {
             error_log('[AutoTrader Integration] ' . $message);
         }
-    }
-
-    /**
-     * Get sample data for testing
-     */
-    private function get_sample_data() {
-        return array(
-            array(
-                'vehicle' => array(
-                    'make' => 'Toyota',
-                    'model' => 'Corolla',
-                    'yearOfManufacture' => '2022',
-                    'vin' => 'VIN12345678901234',
-                    'doors' => 5,
-                    'seats' => 5,
-                    'odometerReadingMiles' => 15000,
-                    'badgeEngineSizeLitres' => '2.0',
-                    'fuelType' => 'Gasoline',
-                    'transmissionType' => 'Automatic',
-                    'bodyType' => 'Sedan',
-                    'standard' => array(
-                        'make' => 'Toyota',
-                        'model' => 'Corolla',
-                        'bodyType' => 'Sedan',
-                        'fuelType' => 'Gasoline',
-                        'transmissionType' => 'Automatic'
-                    )
-                ),
-                'advertiser' => array(
-                    'name' => 'Sample Dealer',
-                    'location' => array(
-                        'addressLineOne' => '123 Main St',
-                        'town' => 'Anytown',
-                        'county' => 'County',
-                        'region' => 'Region',
-                        'postCode' => '12345',
-                        'latitude' => '40.7128',
-                        'longitude' => '-74.0060'
-                    )
-                ),
-                'adverts' => array(
-                    'forecourtPrice' => array(
-                        'amountGBP' => 25000
-                    ),
-                    'retailAdverts' => array(
-                        'suppliedPrice' => array(
-                            'amountGBP' => 25000
-                        ),
-                        'totalPrice' => array(
-                            'amountGBP' => 23500
-                        ),
-                        'description' => 'This is a beautiful Toyota Corolla in excellent condition.'
-                    )
-                ),
-                'metadata' => array(
-                    'stockId' => 'ST12345',
-                    'lastUpdated' => '2025-03-20T16:06:47Z',
-                    'lifecycleState' => 'FORECOURT'
-                ),
-                'media' => array(
-                    'images' => array(
-                        array('url' => 'https://example.com/car1.jpg') ,
-                        array('url' => 'https://example.com/car2.jpg') 
-                    ),
-                    'video' => array(
-                        'href' => 'https://example.com/carvideo.mp4'
-                    ) 
-                )
-            ),
-            array(
-                'vehicle' => array(
-                    'make' => 'Honda',
-                    'model' => 'Civic',
-                    'yearOfManufacture' => '2021',
-                    'vin' => 'VIN98765432109876',
-                    'doors' => 4,
-                    'seats' => 5,
-                    'odometerReadingMiles' => 12000,
-                    'badgeEngineSizeLitres' => '1.8',
-                    'fuelType' => 'Gasoline',
-                    'transmissionType' => 'Automatic',
-                    'bodyType' => 'Sedan',
-                    'standard' => array(
-                        'make' => 'Honda',
-                        'model' => 'Civic',
-                        'bodyType' => 'Sedan',
-                        'fuelType' => 'Gasoline',
-                        'transmissionType' => 'Automatic'
-                    )
-                ),
-                'advertiser' => array(
-                    'name' => 'Sample Dealer',
-                    'location' => array(
-                        'addressLineOne' => '456 Oak St',
-                        'town' => 'Somewhere',
-                        'county' => 'County',
-                        'region' => 'Region',
-                        'postCode' => '67890',
-                        'latitude' => '34.0522',
-                        'longitude' => '-118.2437'
-                    )
-                ),
-                'adverts' => array(
-                    'forecourtPrice' => array(
-                        'amountGBP' => 22000
-                    ),
-                    'retailAdverts' => array(
-                        'suppliedPrice' => array(
-                            'amountGBP' => 22000
-                        ),
-                        'totalPrice' => array(
-                            'amountGBP' => 21000
-                        ),
-                        'description' => 'Low mileage Honda Civic with all the features you need.'
-                    )
-                ),
-                'metadata' => array(
-                    'stockId' => 'ST67890',
-                    'lastUpdated' => '2025-03-20T16:06:47Z',
-                    'lifecycleState' => 'FORECOURT'
-                ),
-                'media' => array(
-                    'images' => array(
-                        array('url' => 'https://example.com/car3.jpg') ,
-                        array('url' => 'https://example.com/car4.jpg') 
-                    ),
-                    'video' => array(
-                        'href' => 'https://example.com/carvideo2.mp4'
-                    ) 
-                )
-            )
-        );
     }
 }
 
