@@ -1,6 +1,3 @@
-<!--// code working well other and add error handling funtion->
-
-
 <?php
 /**
  * AutoTrader API Integration with TF Car Listing Plugin
