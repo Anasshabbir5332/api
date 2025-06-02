@@ -1,6 +1,3 @@
-// all things are working will just have issues with the timeout thing i suppose
-
-
 <?php
 /**
  * AutoTrader API Integration with TF Car Listing Plugin
